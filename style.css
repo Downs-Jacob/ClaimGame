@@ -1,0 +1,127 @@
+body {
+    font-family: Arial, sans-serif;
+    background: #f4f4f4;
+    text-align: center;
+    margin: 0;
+    padding: 0;
+}
+#game-info {
+    margin: 20px 0;
+    font-size: 1.2em;
+}
+#grid {
+    display: grid;
+    grid-template-columns: repeat(10, 40px);
+    grid-template-rows: repeat(10, 40px);
+    gap: 4px;
+    justify-content: center;
+    margin: 0 auto 30px auto;
+    width: max-content;
+}
+.square {
+    width: 40px;
+    height: 40px;
+    background: #fff;
+    border: 1px solid #ccc;
+    cursor: pointer;
+    transition: background 0.2s;
+    border-radius: 6px;
+}
+.square.player {
+    background: #e74c3c;
+}
+.square.computer1 {
+    background: #3498db;
+}
+.square.computer2 {
+    background: #27ae60;
+}
+.square.computer3 {
+    background: #f1c40f;
+}
+.square.computer4 {
+    background: #9b59b6;
+}
+.square.computer5 {
+    background: #e67e22;
+}
+.square.computer6 {
+    background: #e84393;
+}
+.square.computer7 {
+    background: #00b8d4;
+}
+.square.computer8 {
+    background: #8d5524;
+}
+.square.claimed {
+    cursor: default;
+    opacity: 0.8;
+}
+.square.pickable {
+    outline: 2px dashed #888;
+}
+.square.defended {
+    box-shadow: 0 0 0 3px #222 inset;
+    border: 2px solid #222;
+}
+.square.takeover-target {
+    outline: 3px solid #f1c40f;
+    box-shadow: 0 0 8px 2px #f1c40f;
+    position: relative;
+}
+.square.takeover-target::after {
+    content: "!";
+    color: #f1c40f;
+    font-weight: bold;
+    position: absolute;
+    top: 2px;
+    right: 6px;
+    font-size: 1.2em;
+    pointer-events: none;
+}
+#winner {
+    font-size: 2em;
+    color: #2d3436;
+    margin-top: 20px;
+}
+#container {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 32px;
+    margin-top: 20px;
+}
+#main-panel {
+    flex: 0 0 auto;
+}
+#move-panel {
+    flex: 0 0 220px;
+    background: #fffbe7;
+    border: 1px solid #f1c40f;
+    border-radius: 8px;
+    padding: 16px;
+    min-height: 400px;
+    box-shadow: 0 2px 8px #f1c40f33;
+}
+#move-panel h2 {
+    margin-top: 0;
+    color: #b7950b;
+    font-size: 1.2em;
+    letter-spacing: 1px;
+}
+#move-log {
+    font-family: monospace;
+    font-size: 1em;
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    word-break: break-all;
+}
+.move-entry {
+    font-weight: bold;
+    padding: 2px 0;
+    border-radius: 3px;
+    display: inline-block;
+}

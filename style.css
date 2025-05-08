@@ -87,22 +87,23 @@ body {
 }
 #container {
     display: flex;
+    flex-direction: row;
     justify-content: center;
     align-items: flex-start;
-    gap: 32px;
-    margin-top: 20px;
+    margin-top: 30px;
 }
 #main-panel {
     flex: 0 0 auto;
 }
 #move-panel {
-    flex: 0 0 220px;
-    background: #fffbe7;
-    border: 1px solid #f1c40f;
+    width: 180px;
+    background: #f7f7fa;
+    border: 1px solid #bbb;
     border-radius: 8px;
-    padding: 16px;
+    padding: 16px 12px;
+    margin-left: 20px;
     min-height: 400px;
-    box-shadow: 0 2px 8px #f1c40f33;
+    box-sizing: border-box;
 }
 #move-panel h2 {
     margin-top: 0;

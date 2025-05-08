@@ -8,6 +8,7 @@
 </head>
 <body>
     <div id="container">
+
         <div id="main-panel">
             <h1>Grid Claim Game</h1>
             <div id="game-info">
@@ -23,6 +24,12 @@
                 <span id="computer8-score">Brown: 0</span>
             </div>
             <div id="grid"></div>
+<div id="start-controls" style="display:none; margin-top:12px; flex-direction:column; align-items:flex-start; gap:8px;">
+    <label for="turn-timer-input" style="font-size:15px;">Turn Length (seconds):
+        <input type="number" id="turn-timer-input" min="1" max="30" value="3" style="width:60px; margin-left:6px;">
+    </label>
+    <button id="start-btn">Start Game</button>
+</div>
             <div id="winner"></div>
         </div>
         <div id="move-panel">

@@ -1,6 +1,6 @@
 const GRID_SIZE = 10;
 const WIN_COUNT = 30;
-const TIMER_SECONDS = 3; // 5 seconds per round
+let TIMER_SECONDS = 3; // Default 3 seconds per round
 const COMPUTER_PLAYERS = [
     { name: "Blue", class: "computer1", color: "#3498db" },
     { name: "Green", class: "computer2", color: "#27ae60" },
@@ -88,11 +88,16 @@ function handlePlayerClick(idx) {
                 logMove(COMPUTER_PLAYERS[i].name + " (start)", cpuIdx, COMPUTER_PLAYERS[i].color);
             }
         }
+        updateGridPreview();
         renderMoveLog();
         selectingStart = false;
-        winnerElem.textContent = "";
+        winnerElem.textContent = "Click Start Game to begin!";
         updateScores();
-        startRound();
+        // Show Start Game controls
+        const startControls = document.getElementById("start-controls");
+        if (startControls) startControls.style.display = "block";
+        // (Re)attach Start Game handler
+        attachStartHandler();
         return;
     }
     // --- Normal game phase ---
@@ -265,6 +270,32 @@ function revealChoices() {
     checkWinner();
 }
 
+function attachStartHandler() {
+    const startBtn = document.getElementById("start-btn");
+    if (startBtn) {
+        // Remove any existing click handlers
+        startBtn.replaceWith(startBtn.cloneNode(true));
+        const newBtn = document.getElementById("start-btn");
+        if (!newBtn) return;
+        newBtn.onclick = () => {
+            console.log('[DEBUG] Start Game button clicked');
+            // Get timer value from input
+            const input = document.getElementById("turn-timer-input");
+            let val = parseInt(input && input.value);
+            if (!val || val < 1) val = 3;
+            if (val > 30) val = 30;
+            TIMER_SECONDS = val;
+            timer = val;
+            // Hide controls
+            const startControls = document.getElementById("start-controls");
+            if (startControls) startControls.style.display = "none";
+            winnerElem.textContent = "";
+            startRound();
+        };
+        console.log('[DEBUG] Start Game handler attached');
+    }
+}
+
 function resetGame() {
     playerSquares = 0;
     computerSquares = Array(COMPUTER_PLAYERS.length).fill(0);
@@ -278,6 +309,13 @@ function resetGame() {
     updateScores();
     createGrid();
     selectingStart = true;
+    // Hide Start Game controls if visible
+    const startControls = document.getElementById("start-controls");
+    if (startControls) startControls.style.display = "none";
+    // Always reset computerSquares to 0
+    for (let i = 0; i < computerSquares.length; i++) computerSquares[i] = 0;
+    // (Re)attach Start Game handler
+    attachStartHandler();
     // Wait for player to pick, then CPUs will pick and game will start
 }
 
@@ -373,6 +411,8 @@ function updateGridPreview() {
             sq.classList.add("player");
         } else if (playerChoice === i && claimed[i] === "player") {
             sq.classList.add("defended");
+        } else if (selectingStart && !claimed[i]) {
+            sq.classList.add("pickable");
         } else if (roundActive && canPlayerPick(i) && !claimed[i]) {
             sq.classList.add("pickable");
         }
@@ -382,4 +422,5 @@ function updateGridPreview() {
 window.onload = () => {
     createGrid();
     resetGame();
+    attachStartHandler();
 };

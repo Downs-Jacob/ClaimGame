@@ -1,6 +1,6 @@
 const GRID_SIZE = 10;
 const WIN_COUNT = 30;
-const TIMER_SECONDS = 1; // 5 seconds per round
+const TIMER_SECONDS = 3; // 5 seconds per round
 const COMPUTER_PLAYERS = [
     { name: "Blue", class: "computer1", color: "#3498db" },
     { name: "Green", class: "computer2", color: "#27ae60" },
@@ -25,6 +25,8 @@ let defended = Array(GRID_SIZE * GRID_SIZE).fill(false);
 let roundActive = false;
 let moveLog = [];
 let moveOrigins = [];
+let selectingStart = false; // true during starting square selection phase
+
 
 const gridElem = document.getElementById("grid");
 const timerElem = document.getElementById("timer");
@@ -68,6 +70,32 @@ function canPlayerPick(idx) {
 }
 
 function handlePlayerClick(idx) {
+    // --- Starting square selection phase ---
+    if (selectingStart) {
+        if (claimed[idx]) return; // must be unclaimed
+        claimed[idx] = "player";
+        playerSquares = 1;
+        logMove.roundMoves = [];
+        logMove("Player (start)", idx, "#e74c3c");
+        updateGridPreview();
+        renderMoveLog();
+        // Now let CPUs pick
+        for (let i = 0; i < COMPUTER_PLAYERS.length; i++) {
+            let cpuIdx = randomUnclaimedSquare();
+            if (cpuIdx !== null) {
+                claimed[cpuIdx] = COMPUTER_PLAYERS[i].class;
+                computerSquares[i] = 1;
+                logMove(COMPUTER_PLAYERS[i].name + " (start)", cpuIdx, COMPUTER_PLAYERS[i].color);
+            }
+        }
+        renderMoveLog();
+        selectingStart = false;
+        winnerElem.textContent = "";
+        updateScores();
+        startRound();
+        return;
+    }
+    // --- Normal game phase ---
     if (!roundActive || playerChoice !== null) return;
     if (!canPlayerPick(idx)) return;
     // Track origin for bounce logic
@@ -126,6 +154,16 @@ function randomUnclaimedOrTakeoverSquare(forClass, idx) {
     if (options.length === 0) return null;
     return options[Math.floor(Math.random() * options.length)];
 }
+
+function randomUnclaimedSquare() {
+    let options = [];
+    for (let i = 0; i < claimed.length; i++) {
+        if (!claimed[i]) options.push(i);
+    }
+    if (options.length === 0) return null;
+    return options[Math.floor(Math.random() * options.length)];
+}
+
 
 function computerPick() {
     computerChoices = COMPUTER_PLAYERS.map((c, idx) => {
@@ -228,28 +266,21 @@ function revealChoices() {
 }
 
 function resetGame() {
-    playerSquares = 1;
-    computerSquares = Array(COMPUTER_PLAYERS.length).fill(1);
+    playerSquares = 0;
+    computerSquares = Array(COMPUTER_PLAYERS.length).fill(0);
     computerActive = Array(COMPUTER_PLAYERS.length).fill(true);
     claimed = Array(GRID_SIZE * GRID_SIZE).fill(null);
     defended = Array(GRID_SIZE * GRID_SIZE).fill(false);
     moveLog = [];
-    const positions = getInitialPositions();
-    claimed[positions[0]] = "player";
-    // Show only the initial placements
     logMove.roundMoves = [];
-    logMove("Player", positions[0], "#e74c3c");
-    for (let i = 0; i < COMPUTER_PLAYERS.length; i++) {
-        claimed[positions[i+1]] = COMPUTER_PLAYERS[i].class;
-        logMove(COMPUTER_PLAYERS[i].name, positions[i+1], COMPUTER_PLAYERS[i].color);
-    }
-    moveLog = logMove.roundMoves.slice();
     renderMoveLog();
-    winnerElem.textContent = "";
+    winnerElem.textContent = "Pick your starting square!";
     updateScores();
     createGrid();
-    startRound();
+    selectingStart = true;
+    // Wait for player to pick, then CPUs will pick and game will start
 }
+
 
 function updateScores() {
     playerScoreElem.textContent = `Your Squares: ${playerSquares}`;

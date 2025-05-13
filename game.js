@@ -1,3 +1,233 @@
+// --- Multiplayer Setup ---
+const socket = io();
+let mySocketId = null;
+let serverGameState = null;
+
+socket.on('connect', () => {
+    mySocketId = socket.id;
+    console.log('Connected to server as', mySocketId);
+    window.setTimeout(() => {
+        console.log('[DEBUG] mySocketId', mySocketId);
+    }, 1000);
+});
+
+socket.on('player-joined', (data) => {
+    console.log('Player joined:', data.id);
+});
+
+socket.on('player-left', (data) => {
+    console.log('Player left:', data.id);
+});
+
+// --- Lobby/Game UI Switching ---
+const lobbyScreen = document.getElementById('lobby-screen');
+const gameScreen = document.getElementById('game-screen');
+const startGameBtn = document.getElementById('start-game-btn');
+// Add lobby player list and status
+let lobbyPlayersElem = document.getElementById('lobby-players');
+if (!lobbyPlayersElem) {
+    lobbyPlayersElem = document.createElement('div');
+    lobbyPlayersElem.id = 'lobby-players';
+    lobbyPlayersElem.style.margin = '12px 0';
+    lobbyScreen.appendChild(lobbyPlayersElem);
+}
+let lobbyStatusElem = document.getElementById('lobby-status');
+if (!lobbyStatusElem) {
+    lobbyStatusElem = document.createElement('div');
+    lobbyStatusElem.id = 'lobby-status';
+    lobbyStatusElem.style.margin = '8px 0 0 0';
+    lobbyScreen.appendChild(lobbyStatusElem);
+}
+
+let lobbyPlayers = [];
+let lobbyNumPlayers = 2;
+let lobbyHostId = null;
+
+// Show lobby by default
+lobbyScreen.style.display = '';
+gameScreen.style.display = 'none';
+
+startGameBtn.onclick = function() {
+    const numPlayers = parseInt(document.getElementById('num-players-select').value, 10);
+    const timer = parseInt(document.getElementById('timer-select').value, 10);
+    socket.emit('start-game', { numPlayers, timer });
+};
+
+// Listen for live player list from server
+socket.on('players', ({ players, numPlayers, hostId }) => {
+    lobbyPlayers = players;
+    lobbyNumPlayers = numPlayers;
+    lobbyHostId = hostId;
+    let html = '<b>Players in Lobby:</b><ul style="margin:0 0 0 18px;padding:0;">';
+    for (const id of players) {
+        html += `<li>${id === mySocketId ? 'You' : id}${id === hostId ? ' <span style=\'color:#2980b9\'>(Host)</span>' : ''}</li>`;
+    }
+    html += '</ul>';
+    lobbyPlayersElem.innerHTML = html;
+    // Status message
+    const needed = numPlayers - players.length;
+    if (needed > 0) {
+        lobbyStatusElem.textContent = `Waiting for ${needed} more player${needed === 1 ? '' : 's'} to join...`;
+        startGameBtn.disabled = true;
+    } else {
+        if (hostId === mySocketId) {
+            lobbyStatusElem.textContent = 'All players joined! You may start the game.';
+            startGameBtn.disabled = false;
+        } else {
+            lobbyStatusElem.textContent = 'All players joined! Waiting for host to start the game...';
+            startGameBtn.disabled = true;
+        }
+    }
+});
+
+// Server tells us when to start the game
+socket.on('game-started', (settings) => {
+    lobbyScreen.style.display = 'none';
+    gameScreen.style.display = '';
+});
+
+// Receive authoritative game state from server
+socket.on('game-state', (state) => {
+    serverGameState = state;
+    console.log('[DEBUG] Received game-state:', state);
+    console.log('[DEBUG] mySocketId:', mySocketId, 'currentTurn:', state.currentTurn, 'turnOrder:', state.turnOrder);
+    renderGridFromServer(state);
+    renderScores(state);
+});
+
+// --- Claim Square Handler ---
+function handleSquareClick(index) {
+    if (!serverGameState) return;
+    // --- Starting Location Phase ---
+    if (serverGameState.phase === 'choose_start') {
+        // Only allow picking if it's your starting turn and square is unclaimed
+        if (serverGameState.currentTurn !== mySocketId) return;
+        if (serverGameState.claimed[index]) return;
+        socket.emit('pick-start-square', { index });
+        return;
+    }
+    // --- Main Phase ---
+    if (serverGameState.phase === 'main') {
+        // Allow simultaneous claiming: any player can pick if roundActive and not yet picked
+        if (!serverGameState.roundActive || serverGameState.playerChoices[mySocketId] !== undefined) return;
+        // Only allow picking unclaimed squares
+        if (serverGameState.claimed[index]) return;
+        socket.emit('claim-square', { index });
+        return;
+    }
+    // Ignore clicks in other phases
+}
+
+// --- Render Grid From Server State ---
+function renderGridFromServer(state) {
+    // Phase feedback message
+    let phaseMsg = document.getElementById('phase-msg');
+    if (!phaseMsg) {
+        phaseMsg = document.createElement('div');
+        phaseMsg.id = 'phase-msg';
+        phaseMsg.style.margin = '12px 0';
+        phaseMsg.style.fontSize = '1.15em';
+        phaseMsg.style.fontWeight = 'bold';
+        phaseMsg.style.color = '#2d3436';
+        phaseMsg.style.minHeight = '24px';
+        gameScreen.insertBefore(phaseMsg, gameScreen.firstChild);
+    }
+    if (state.phase === 'choose_start') {
+        if (state.currentTurn === mySocketId) {
+            phaseMsg.textContent = 'Pick your starting square!';
+        } else {
+            phaseMsg.textContent = `Waiting for ${state.currentTurnName} to pick a starting square...`;
+        }
+    } else if (state.phase === 'main') {
+        phaseMsg.textContent = '';
+    } else if (state.phase === 'lobby') {
+        phaseMsg.textContent = '';
+    }
+
+    // Render all squares from server state
+    for (let i = 0; i < state.claimed.length; i++) {
+        const cell = document.getElementById('cell-' + i);
+        if (!cell) continue;
+        const owner = state.claimed[i];
+        cell.className = 'square';
+        // Animate if just claimed
+        if (window.moveLog && window.moveLog.length && window.moveLog[window.moveLog.length-1].idx === i) {
+            cell.classList.add('just-claimed');
+            setTimeout(() => cell.classList.remove('just-claimed'), 700);
+        }
+        // Color by owner (use playerClasses mapping for human players)
+        if (owner) {
+            // Fallback: assign a unique color to each unique owner if mapping is missing or buggy
+            if (!window.fallbackMap) window.fallbackMap = {};
+            if (!window.fallbackColors) window.fallbackColors = ['player1', 'player2', 'player3', 'player4'];
+            if (!window.fallbackIdx) window.fallbackIdx = 0;
+            let className = (state.playerClasses && state.playerClasses[owner]) ?
+                state.playerClasses[owner] :
+                (window.fallbackMap[owner] || (window.fallbackMap[owner] = window.fallbackColors[window.fallbackIdx++ % window.fallbackColors.length]));
+            cell.classList.add(className);
+            cell.classList.add('claimed');
+        }
+        // Defended
+        if (state.defended && state.defended[i]) cell.classList.add('defended');
+        // --- Highlight pickable squares for starting phase ---
+        if (state.phase === 'choose_start' && state.currentTurn === mySocketId && !owner) {
+            cell.classList.add('pickable');
+        }
+        // Allow picking unclaimed squares adjacent to your own, or defending your own square
+        if (state.phase === 'main' && state.roundActive && state.playerChoices[mySocketId] === undefined) {
+            // Unclaimed and adjacent to your own
+            if (!owner && state.claimed.some((o, j) => o === mySocketId && getAdjacentIndices(j).includes(i))) {
+                cell.classList.add('pickable');
+            }
+            // Defend your own
+            if (owner === mySocketId) {
+                cell.classList.add('pickable');
+            }
+        }
+    }
+    // Show winner if present
+    if (state.winner && winnerElem) winnerElem.textContent = state.winner;
+    else if (winnerElem) winnerElem.textContent = '';
+    // Show round status
+    if (state.phase === 'main' && state.roundActive && timerElem) timerElem.textContent = `Timer: ${state.timer}`;
+    else if (timerElem) timerElem.textContent = '';
+    // Show 'Your Turn!' message if it's the player's turn (main phase only)
+    const turnMsg = document.getElementById('your-turn-msg');
+    if (turnMsg) {
+        if (state.phase === 'main' && state.roundActive && state.playerChoices && state.playerChoices[mySocketId] === undefined && state.currentTurn === mySocketId) {
+            turnMsg.textContent = 'Your Turn!';
+        } else {
+            turnMsg.textContent = '';
+        }
+    }
+}
+
+// --- Render Scores (basic) ---
+function renderScores(state) {
+    // Assumes there is an element with id 'scoreboard'
+    const scoreboard = document.getElementById('scoreboard');
+    if (!scoreboard) return;
+    let html = '<b>Scores:</b><br>';
+    for (const [id, count] of Object.entries(state.playerSquares)) {
+        html += `${id === mySocketId ? 'You' : id}: ${count}<br>`;
+    }
+    scoreboard.innerHTML = html;
+}
+
+// --- Setup Grid DOM (no local state) ---
+function setupGridDOM() {
+    const gridElem = document.getElementById('grid');
+    gridElem.innerHTML = '';
+    for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
+        const cell = document.createElement('div');
+        cell.className = 'square';
+        cell.id = 'cell-' + i;
+        cell.addEventListener('click', () => handleSquareClick(i));
+        gridElem.appendChild(cell);
+    }
+}
+
+// --- Game Logic ---
 const GRID_SIZE = 10;
 const WIN_COUNT = 30;
 let TIMER_SECONDS = 3; // Default 3 seconds per round
@@ -332,6 +562,8 @@ function updateScores() {
 function checkWinner() {
     if (playerSquares >= WIN_COUNT) {
         winnerElem.textContent = "You win!";
+        winnerElem.classList.add('winner-flash');
+        setTimeout(() => winnerElem.classList.remove('winner-flash'), 1200);
         roundActive = false;
         clearInterval(interval);
     } else {
@@ -339,6 +571,8 @@ function checkWinner() {
             if (computerSquares[i] >= WIN_COUNT) {
                 let color = COMPUTER_PLAYERS[i].name;
                 winnerElem.textContent = `${color} wins!`;
+                winnerElem.classList.add('winner-flash');
+                setTimeout(() => winnerElem.classList.remove('winner-flash'), 1200);
                 roundActive = false;
                 clearInterval(interval);
                 break;
@@ -377,22 +611,26 @@ function coordStr(idx) {
 
 function renderMoveLog() {
     moveLogElem.innerHTML = "";
-    // Show only the most recent moves for this round
+    // Show all moves (optionally limit to last N)
     for (let i = 0; i < moveLog.length; i++) {
         const entry = moveLog[i];
         const div = document.createElement("span");
-        div.className = "move-entry";
-        div.textContent = `${entry.name}: ${coordStr(entry.idx)}`;
+        div.className = "move-entry animate-move";
+        const time = entry.time ? ` [${entry.time}]` : '';
+        let moveType = entry.moveType ? ` (${entry.moveType})` : '';
+        div.textContent = `${entry.name}${moveType}: ${coordStr(entry.idx)}${time}`;
         div.style.color = entry.color;
         moveLogElem.appendChild(div);
+        setTimeout(() => div.classList.remove('animate-move'), 900);
     }
 }
 
-function logMove(name, idx, color) {
-    // Instead of accumulating, just show the latest round's moves
-    if (!logMove.roundMoves) logMove.roundMoves = [];
-    logMove.roundMoves.push({ name, idx, color });
-    // At the end of revealChoices, render only this round's moves
+function logMove(name, idx, color, moveType) {
+    if (!window.moveLog) window.moveLog = [];
+    const now = new Date();
+    const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    window.moveLog.push({ name, idx, color, moveType, time });
+    renderMoveLog();
 }
 
 function updateGridPreview() {
@@ -420,7 +658,5 @@ function updateGridPreview() {
 }
 
 window.onload = () => {
-    createGrid();
-    resetGame();
-    attachStartHandler();
+    setupGridDOM(); // Only create the grid cells and listeners
 };

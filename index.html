@@ -11,9 +11,52 @@
 
         <div id="main-panel">
             <h1>Grid Claim Game</h1>
-            <div id="game-info">
-                <span id="timer">Timer: 3</span>
-                <span id="player-score">Your Squares: 0</span>
+
+            <div id="lobby-screen" style="max-width:400px;margin:32px auto;padding:24px 18px;background:#f7f7f7;border-radius:10px;box-shadow:0 2px 8px #0001;">
+                <h2>Game Lobby</h2>
+                <label>Number of Players:
+                    <select id="num-players-select">
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                    </select>
+                </label>
+                <br><br>
+                <label>Timer per Round:
+                    <select id="timer-select">
+                        <option value="3">3 seconds</option>
+                        <option value="5">5 seconds</option>
+                        <option value="10">10 seconds</option>
+                    </select>
+                </label>
+                <br><br>
+                <button id="start-game-btn" style="padding:8px 24px;font-size:1.1em;">Start Game</button>
+            </div>
+
+            <div id="game-screen" style="display:none;">
+                <div id="game-bar" style="display:flex;align-items:center;justify-content:center;gap:32px;padding:8px 0;background:#f7f7f7;border-radius:8px;margin-bottom:12px;min-height:2.2em;">
+                    <span id="timer">Timer: 3</span>
+                    <div id="your-turn-msg" style="color:#2ecc40;font-size:1.2em;"></div>
+                </div>
+                <div id="game-info">
+                    <span id="player-score">Your Squares: 0</span>
+                    <span id="computer1-score">Blue: 0</span>
+                    <span id="computer2-score">Green: 0</span>
+                    <span id="computer3-score">Yellow: 0</span>
+                    <span id="computer4-score">Purple: 0</span>
+                    <span id="computer5-score">Orange: 0</span>
+                    <span id="computer6-score">Pink: 0</span>
+                    <span id="computer7-score">Cyan: 0</span>
+                    <span id="computer8-score">Brown: 0</span>
+                </div>
+                <div id="grid"></div>
+                <div id="start-controls" style="display:none; margin-top:12px; flex-direction:column; align-items:flex-start; gap:8px;">
+                    <label for="turn-timer-input" style="font-size:15px;">Turn Length (seconds):
+                        <input type="number" id="turn-timer-input" min="1" max="30" value="3" style="width:60px; margin-left:6px;">
+                    </label>
+                    <button id="start-btn">Start Game</button>
+                </div>
+                <div id="winner"></div>
                 <span id="computer1-score">Blue: 0</span>
                 <span id="computer2-score">Green: 0</span>
                 <span id="computer3-score">Yellow: 0</span>
@@ -37,6 +80,7 @@
             <div id="move-log"></div>
         </div>
     </div>
-    <script src="game.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+<script src="game.js"></script>
 </body>
 </html>

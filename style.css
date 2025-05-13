@@ -57,18 +57,30 @@ body {
 .square.claimed {
     cursor: default;
     opacity: 0.8;
+    transition: box-shadow 0.3s;
 }
 .square.pickable {
     outline: 2px dashed #888;
+    box-shadow: 0 0 4px #ffe066;
 }
 .square.defended {
     box-shadow: 0 0 0 3px #222 inset;
     border: 2px solid #222;
+    animation: defend-pop 0.4s;
+}
+@keyframes defend-pop {
+    0% { box-shadow: 0 0 0 6px #222a; }
+    100% { box-shadow: 0 0 0 3px #222 inset; }
 }
 .square.takeover-target {
     outline: 3px solid #f1c40f;
     box-shadow: 0 0 8px 2px #f1c40f;
     position: relative;
+    animation: takeover-pop 0.5s;
+}
+@keyframes takeover-pop {
+    0% { outline: 3px solid #ffe066; }
+    100% { outline: 3px solid #f1c40f; }
 }
 .square.takeover-target::after {
     content: "!";
@@ -84,6 +96,7 @@ body {
     font-size: 2em;
     color: #2d3436;
     margin-top: 20px;
+    transition: color 0.4s, text-shadow 0.4s;
 }
 #container {
     display: flex;
@@ -91,6 +104,7 @@ body {
     justify-content: center;
     align-items: flex-start;
     margin-top: 30px;
+    gap: 24px;
 }
 #main-panel {
     flex: 0 0 auto;
@@ -119,10 +133,55 @@ body {
     flex-direction: column;
     gap: 4px;
     word-break: break-all;
+    min-height: 120px;
+    max-height: 300px;
+    overflow-y: auto;
 }
 .move-entry {
     font-weight: bold;
     padding: 2px 0;
     border-radius: 3px;
     display: inline-block;
+    transition: background 0.3s, color 0.3s;
+}
+.player1 {
+    background: #e74c3c !important; /* Red */
+}
+.player2 {
+    background: #3498db !important; /* Blue */
+}
+.player3 {
+    background: #27ae60 !important; /* Green */
+}
+.player4 {
+    background: #f1c40f !important; /* Yellow */
+}
+.animate-move {
+    background: #fffbe6;
+    animation: move-pop 0.8s;
+}
+@keyframes move-pop {
+    0% { background: #fffbe6; transform: scale(1.1); }
+    60% { background: #fffbe6; transform: scale(1.05); }
+    100% { background: none; transform: scale(1); }
+}
+.just-claimed {
+    animation: claim-flash 0.7s;
+}
+@keyframes claim-flash {
+    0% { box-shadow: 0 0 0 4px #ffe066; }
+    70% { box-shadow: 0 0 0 8px #ffe06644; }
+    100% { box-shadow: none; }
+}
+.current-turn {
+    outline: 2px solid #2ecc40 !important;
+    box-shadow: 0 0 8px 2px #2ecc4040;
+}
+.winner-flash {
+    animation: winner-flash 1.2s;
+}
+@keyframes winner-flash {
+    0% { color: #e67e22; text-shadow: 0 0 6px #ffe066; }
+    80% { color: #2ecc40; text-shadow: 0 0 16px #ffe066; }
+    100% { color: #2d3436; text-shadow: none; }
 }

@@ -300,6 +300,8 @@ io.on('connection', (socket) => {
         if (gameState.phase !== 'main') return;
         if (!gameState.roundActive) return;
         if (gameState.playerChoices[socket.id] !== undefined) return; // already picked
+        // Prevent eliminated players from acting
+        if (!gameState.playerSquares[socket.id] || gameState.playerSquares[socket.id] <= 0) return;
         // Defend your own square
         if (gameState.claimed[index] === socket.id) {
             gameState.defended[index] = true;
@@ -309,11 +311,13 @@ io.on('connection', (socket) => {
                 color: gameState.playerColors[socket.id] || '#000',
                 moveType: 'defend'
             });
+            console.log(`[SERVER] Player ${socket.id} DEFENDED square ${index}`);
             return;
         }
-        // Take over another player's square if adjacent to your own
+        // Takeover logic:
         if (gameState.claimed[index] && gameState.claimed[index] !== socket.id) {
             const isAdjacent = gameState.claimed.some((o, j) => o === socket.id && getAdjacentIndices(j).includes(index));
+            console.log(`[SERVER] Takeover attempt by ${socket.id} on square ${index} (owned by ${gameState.claimed[index]}), isAdjacent: ${isAdjacent}`);
             if (isAdjacent) {
                 gameState.playerChoices[socket.id] = index;
                 gameState.moveLog.push({
@@ -321,38 +325,25 @@ io.on('connection', (socket) => {
                     color: gameState.playerColors[socket.id] || '#000',
                     moveType: 'takeover'
                 });
+                console.log(`[SERVER] Player ${socket.id} TAKEOVER registered for square ${index}`);
+            } else {
+                console.log(`[SERVER] Takeover by ${socket.id} on square ${index} DENIED (not adjacent)`);
             }
             return;
         }
         // Claim unclaimed square if adjacent to your own (or first move)
-        if (gameState.claimed[index] === null) {
-            const ownsAny = Object.values(gameState.claimed).includes(socket.id);
-            const isAdjacent = gameState.claimed.some((o, j) => o === socket.id && getAdjacentIndices(j).includes(index));
-            if (!ownsAny || isAdjacent) {
-                gameState.playerChoices[socket.id] = index;
-                gameState.moveLog.push({
-                    idx: index,
-                    color: gameState.playerColors[socket.id] || '#000',
-                    moveType: 'claim'
-                });
-            }
-            return;
-        }
-        // Otherwise, invalid move
-        return;
-        // Log move
-        gameState.moveLog.push({
-            name: getTurnName(socket.id),
-            idx: index,
-            color: socket.id === gameState.currentTurn ? '#e74c3c' : '#aaa',
-            moveType: 'claim',
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-        });
-        advanceTurn();
-        io.emit('game-state', getSerializableGameState());
-        // If all players have picked, end round early
-        if (Object.keys(gameState.playerChoices).length >= lobby.numPlayers) {
-            endRound();
+        const ownsAny = Object.values(gameState.claimed).includes(socket.id);
+        const isAdjacent = gameState.claimed.some((o, j) => o === socket.id && getAdjacentIndices(j).includes(index));
+        if (!ownsAny || isAdjacent) {
+            gameState.playerChoices[socket.id] = index;
+            gameState.moveLog.push({
+                idx: index,
+                color: gameState.playerColors[socket.id] || '#000',
+                moveType: 'claim'
+            });
+            console.log(`[SERVER] Player ${socket.id} CLAIMED square ${index}`);
+        } else {
+            console.log(`[SERVER] Player ${socket.id} claim on ${index} DENIED (not adjacent)`);
         }
     });
 
@@ -519,6 +510,7 @@ function startRound() {
 function endRound() {
     if (gameState.interval) clearInterval(gameState.interval);
     gameState.roundActive = false;
+    console.log('[SERVER] --- END ROUND ---');
     // Apply moves: all player choices
     for (const [pid, idx] of Object.entries(gameState.playerChoices)) {
         // Takeover: if owned by another player
@@ -528,14 +520,19 @@ function endRound() {
             // Decrement previous owner's square count
             if (gameState.playerSquares[prevOwner] > 0) gameState.playerSquares[prevOwner]--;
             gameState.playerSquares[pid] = (gameState.playerSquares[pid] || 0) + 1;
-            continue;
-        }
-        // Claim: if unclaimed
-        if (gameState.claimed[idx] === null) {
+            console.log(`[SERVER] Square ${idx} TAKEN OVER by ${pid} from ${prevOwner}`);
+        } else if (!gameState.claimed[idx]) {
+            // Claim unclaimed
             gameState.claimed[idx] = pid;
             gameState.playerSquares[pid] = (gameState.playerSquares[pid] || 0) + 1;
+            console.log(`[SERVER] Square ${idx} CLAIMED by ${pid}`);
+        } else if (gameState.claimed[idx] === pid) {
+            // Defend
+            gameState.defended[idx] = true;
+            console.log(`[SERVER] Square ${idx} DEFENDED by ${pid}`);
+        } else {
+            console.log(`[SERVER] Square ${idx} - no change (possibly bounced)`);
         }
-        // Defend: already handled in main logic by marking defended
     }
     // Log 'no placement' for players who did not act
     for (const pid of Object.keys(gameState.playerSquares)) {
@@ -545,6 +542,15 @@ function endRound() {
                 color: gameState.playerColors[pid] || '#888',
                 moveType: 'no placement'
             });
+        }
+    }
+    // Remove eliminated players (square count 0)
+    for (const pid of Object.keys(gameState.playerSquares)) {
+        if (gameState.playerSquares[pid] <= 0) {
+            delete gameState.playerSquares[pid];
+            // Optionally: also remove from turnOrder, playerColors, etc.
+            // Optionally: log elimination
+            console.log(`[SERVER] Player ${pid} eliminated (no squares left)`);
         }
     }
     // Check for winner

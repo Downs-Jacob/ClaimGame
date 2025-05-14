@@ -31,6 +31,7 @@ if (!lobbyPlayersElem) {
     lobbyPlayersElem.style.margin = '12px 0';
     lobbyScreen.appendChild(lobbyPlayersElem);
 }
+
 let lobbyStatusElem = document.getElementById('lobby-status');
 if (!lobbyStatusElem) {
     lobbyStatusElem = document.createElement('div');
@@ -53,6 +54,7 @@ startGameBtn.onclick = function() {
     socket.emit('start-game', { numPlayers, timer });
 };
 
+// Listen for live player list from server
 // Listen for live player list from server
 socket.on('players', ({ players, numPlayers, hostId }) => {
     lobbyPlayers = players;
@@ -93,7 +95,28 @@ socket.on('game-state', (state) => {
     console.log('[DEBUG] mySocketId:', mySocketId, 'currentTurn:', state.currentTurn, 'turnOrder:', state.turnOrder);
     renderGridFromServer(state);
     renderScores(state);
+    // Update move log from server
+    if (Array.isArray(state.moveLog)) {
+        window.moveLog = state.moveLog;
+        renderMoveLog();
+    }
 });
+
+// --- Multiplayer-safe canPlayerPick ---
+function canPlayerPickMultiplayer(idx) {
+    const claimed = serverGameState.claimed;
+    const myId = mySocketId;
+    const mySquares = serverGameState.playerSquares[myId] || 0;
+    // Allow defending your own squares
+    if (claimed[idx] === myId) return true;
+    // Only allow attacking/taking over if adjacent to your own square
+    if (mySquares === 0) return !claimed[idx]; // first move
+    // Must be adjacent to a player square
+    return (
+        (claimed[idx] && claimed[idx] !== myId && claimed.some((owner, i) => owner === myId && getAdjacentIndices(i).includes(idx))) ||
+        (!claimed[idx] && claimed.some((owner, i) => owner === myId && getAdjacentIndices(i).includes(idx)))
+    );
+}
 
 // --- Claim Square Handler ---
 function handleSquareClick(index) {
@@ -108,15 +131,26 @@ function handleSquareClick(index) {
     }
     // --- Main Phase ---
     if (serverGameState.phase === 'main') {
-        // Allow simultaneous claiming: any player can pick if roundActive and not yet picked
         if (!serverGameState.roundActive || serverGameState.playerChoices[mySocketId] !== undefined) return;
-        // Only allow picking unclaimed squares
-        if (serverGameState.claimed[index]) return;
+        // Only allow picking if valid by new canPlayerPickMultiplayer
+        if (!canPlayerPickMultiplayer(index)) return;
+        let origin = null;
+        // If attacking an enemy square, find one of your adjacent squares as origin
+        if (serverGameState.claimed[index] && serverGameState.claimed[index] !== mySocketId) {
+            for (let i = 0; i < serverGameState.claimed.length; i++) {
+                if (serverGameState.claimed[i] === mySocketId && getAdjacentIndices(i).includes(index)) {
+                    origin = i;
+                    break;
+                }
+            }
+        }
+        // Send only index, as the server expects { index }
         socket.emit('claim-square', { index });
         return;
     }
     // Ignore clicks in other phases
 }
+
 
 // --- Render Grid From Server State ---
 function renderGridFromServer(state) {
@@ -610,24 +644,32 @@ function coordStr(idx) {
 }
 
 function renderMoveLog() {
-    moveLogElem.innerHTML = "";
-    // Show all moves (optionally limit to last N)
-    for (let i = 0; i < moveLog.length; i++) {
-        const entry = moveLog[i];
-        const div = document.createElement("span");
-        div.className = "move-entry animate-move";
-        const time = entry.time ? ` [${entry.time}]` : '';
-        let moveType = entry.moveType ? ` (${entry.moveType})` : '';
-        div.textContent = `${entry.name}${moveType}: ${coordStr(entry.idx)}${time}`;
-        div.style.color = entry.color;
-        moveLogElem.appendChild(div);
-        setTimeout(() => div.classList.remove('animate-move'), 900);
+    const logElem = document.getElementById('move-log');
+    if (!logElem) return;
+    logElem.innerHTML = '';
+    if (!window.moveLog || !Array.isArray(window.moveLog)) return;
+    for (const entry of window.moveLog.slice(-30)) {
+        let moveText = '';
+        if (entry.moveType === 'defend') {
+            moveText = `defended (${coordStr(entry.idx)})`;
+        } else if (entry.moveType === 'claim') {
+            moveText = `claimed (${coordStr(entry.idx)})`;
+        } else if (entry.moveType === 'takeover') {
+            moveText = `took over (${coordStr(entry.idx)})`;
+        } else if (entry.moveType === 'no placement') {
+            moveText = `(no placement)`;
+        }
+        const div = document.createElement('div');
+        div.textContent = moveText;
+        div.style.fontSize = '13px';
+        div.style.color = entry.color || '#000';
+        logElem.appendChild(div);
     }
 }
 
 function logMove(name, idx, color, moveType) {
     if (!window.moveLog) window.moveLog = [];
-    const now = new Date();
+    window.moveLog.push({ name, idx, color, moveType });
     const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     window.moveLog.push({ name, idx, color, moveType, time });
     renderMoveLog();

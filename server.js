@@ -30,7 +30,7 @@ let lobby = {
     started: false,
     numPlayers: 2,
     timer: 3,
-    hostId: null,
+    hostId: null
 };
 
 let connectedPlayers = [];
@@ -84,6 +84,7 @@ function resetGameState() {
         turnIndex: 0,
         phase: 'lobby', // 'lobby', 'choose_start', 'main'
         startingTurnIndex: 0, // for starting square selection
+        playerColors: {} // will be set after turnOrder is set
     };
 }
 
@@ -243,12 +244,22 @@ function revealChoices() {
 
 // --- Socket.io connection handler ---
 io.on('connection', (socket) => {
+
     if (!connectedPlayers.includes(socket.id)) connectedPlayers.push(socket.id);
     gameState.playerSquares[socket.id] = 0;
     // Assign a unique, stable player number
     if (!playerNumbers[socket.id]) {
-        playerNumbers[socket.id] = nextPlayerNum++;
+        playerNumbers[socket.id] = Object.keys(playerNumbers).length;
     }
+    // Assign player colors based on turn order: host=red, next=blue, then green, yellow, etc.
+    if (!gameState.playerColors) gameState.playerColors = {};
+    const colorList = ['#e74c3c', '#2980b9', '#27ae60', '#f1c40f', '#8e44ad', '#e67e22', '#1abc9c', '#34495e'];
+    if (gameState.turnOrder && gameState.turnOrder.length > 0) {
+        gameState.turnOrder.forEach((pid, i) => {
+            gameState.playerColors[pid] = colorList[i % colorList.length];
+        });
+    }
+
     console.log('[DEBUG][SERVER] New connection:', socket.id);
     console.log('[DEBUG][SERVER] Current turnOrder:', gameState.turnOrder);
     console.log('[DEBUG][SERVER] Current currentTurn:', gameState.currentTurn);
@@ -293,14 +304,37 @@ io.on('connection', (socket) => {
         if (gameState.claimed[index] === socket.id) {
             gameState.defended[index] = true;
             gameState.playerChoices[socket.id] = index;
+            gameState.moveLog.push({
+                idx: index,
+                color: gameState.playerColors[socket.id] || '#000',
+                moveType: 'defend'
+            });
             return;
         }
-        // Claim unclaimed square if adjacent to your own
+        // Take over another player's square if adjacent to your own
+        if (gameState.claimed[index] && gameState.claimed[index] !== socket.id) {
+            const isAdjacent = gameState.claimed.some((o, j) => o === socket.id && getAdjacentIndices(j).includes(index));
+            if (isAdjacent) {
+                gameState.playerChoices[socket.id] = index;
+                gameState.moveLog.push({
+                    idx: index,
+                    color: gameState.playerColors[socket.id] || '#000',
+                    moveType: 'takeover'
+                });
+            }
+            return;
+        }
+        // Claim unclaimed square if adjacent to your own (or first move)
         if (gameState.claimed[index] === null) {
             const ownsAny = Object.values(gameState.claimed).includes(socket.id);
             const isAdjacent = gameState.claimed.some((o, j) => o === socket.id && getAdjacentIndices(j).includes(index));
             if (!ownsAny || isAdjacent) {
                 gameState.playerChoices[socket.id] = index;
+                gameState.moveLog.push({
+                    idx: index,
+                    color: gameState.playerColors[socket.id] || '#000',
+                    moveType: 'claim'
+                });
             }
             return;
         }
@@ -374,6 +408,12 @@ function startGameFromLobby() {
     gameState.currentTurnName = getTurnName(gameState.currentTurn);
     gameState.phase = 'choose_start';
     gameState.startingTurnIndex = 0;
+    // Assign player colors based on turn order: host=red, next=blue, etc.
+    const colorList = ['#e74c3c', '#2980b9', '#27ae60', '#f1c40f', '#8e44ad', '#e67e22', '#1abc9c', '#34495e'];
+    gameState.playerColors = {};
+    gameState.turnOrder.forEach((pid, i) => {
+        gameState.playerColors[pid] = colorList[i % colorList.length];
+    });
     console.log('[DEBUG] Game started. Turn order:', gameState.turnOrder);
     console.log('[DEBUG] First turn:', gameState.currentTurn, gameState.currentTurnName);
     io.emit('game-started', { numPlayers: lobby.numPlayers, timer: lobby.timer });
@@ -481,9 +521,30 @@ function endRound() {
     gameState.roundActive = false;
     // Apply moves: all player choices
     for (const [pid, idx] of Object.entries(gameState.playerChoices)) {
+        // Takeover: if owned by another player
+        if (gameState.claimed[idx] && gameState.claimed[idx] !== pid) {
+            const prevOwner = gameState.claimed[idx];
+            gameState.claimed[idx] = pid;
+            // Decrement previous owner's square count
+            if (gameState.playerSquares[prevOwner] > 0) gameState.playerSquares[prevOwner]--;
+            gameState.playerSquares[pid] = (gameState.playerSquares[pid] || 0) + 1;
+            continue;
+        }
+        // Claim: if unclaimed
         if (gameState.claimed[idx] === null) {
             gameState.claimed[idx] = pid;
             gameState.playerSquares[pid] = (gameState.playerSquares[pid] || 0) + 1;
+        }
+        // Defend: already handled in main logic by marking defended
+    }
+    // Log 'no placement' for players who did not act
+    for (const pid of Object.keys(gameState.playerSquares)) {
+        if (!(pid in gameState.playerChoices)) {
+            gameState.moveLog.push({
+                idx: null,
+                color: gameState.playerColors[pid] || '#888',
+                moveType: 'no placement'
+            });
         }
     }
     // Check for winner

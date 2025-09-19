@@ -157,90 +157,7 @@ function randomUnclaimedOrTakeoverSquare(forClass, idx) {
 }
 
 // --- Round Logic ---
-function startRound() {
-    if (gameState.claimed.filter(x => x).length >= GRID_SIZE * GRID_SIZE) return;
-    gameState.playerChoice = null;
-    gameState.computerChoices = Array(COMPUTER_PLAYERS.length).fill(null);
-    gameState.defended = gameState.defended.map(() => false);
-    gameState.roundActive = true;
-    gameState.timer = 3;
-    io.emit('game-state', getSerializableGameState());
-    if (gameState.interval) clearInterval(gameState.interval);
-    gameState.interval = setInterval(() => {
-        gameState.timer--;
-        io.emit('game-state', getSerializableGameState());
-        if (gameState.timer <= 0) {
-            clearInterval(gameState.interval);
-            gameState.roundActive = false;
-            computerPick();
-            revealChoices();
-            setTimeout(startRound, 2000); // short delay
-        }
-    }, 1000);
-}
-
-function computerPick() {
-    gameState.computerChoices = COMPUTER_PLAYERS.map((c, idx) => {
-        let pick = randomUnclaimedOrTakeoverSquare(c.class, idx);
-        // If it's a takeover, pick an origin for bounce logic
-        let origin = null;
-        if (pick !== null && gameState.claimed[pick] && gameState.claimed[pick] !== c.class) {
-            for (let j = 0; j < gameState.claimed.length; j++) {
-                if (gameState.claimed[j] === c.class && getAdjacentIndices(j).includes(pick)) {
-                    origin = j;
-                    break;
-                }
-            }
-        }
-        gameState.moveOrigins[idx + 1] = origin; // idx+1: player is 0, computers 1..N
-        return pick;
-    });
-}
-
-function revealChoices() {
-    let allChoices = [gameState.playerChoice, ...gameState.computerChoices];
-    let counts = {};
-    gameState.moveLog = [];
-    // --- BOUNCE LOGIC ---
-    let bounced = new Set();
-    for (let i = 0; i < allChoices.length; i++) {
-        let myTarget = allChoices[i];
-        let myOrigin = gameState.moveOrigins[i];
-        if (myTarget === null || myOrigin === null) continue;
-        // See if anyone else is attacking my origin from my target
-        for (let j = 0; j < allChoices.length; j++) {
-            if (i === j) continue;
-            if (allChoices[j] === myOrigin && gameState.moveOrigins[j] === myTarget) {
-                bounced.add(i);
-                bounced.add(j);
-            }
-        }
-    }
-    // Apply moves
-    for (let i = 0; i < allChoices.length; i++) {
-        let choice = allChoices[i];
-        if (choice === null) continue;
-        if (i === 0) {
-            // Player
-            if (!bounced.has(i) && (!gameState.claimed[choice] || gameState.claimed[choice] !== 'player')) {
-                gameState.claimed[choice] = 'player';
-                gameState.playerSquares[gameState.lastPlayerId] = (gameState.playerSquares[gameState.lastPlayerId] || 0) + 1;
-            } else if (bounced.has(i)) {
-                // bounced
-            }
-        } else {
-            // Computer
-            let compClass = COMPUTER_PLAYERS[i - 1].class;
-            if (!bounced.has(i) && (!gameState.claimed[choice] || gameState.claimed[choice] !== compClass)) {
-                gameState.claimed[choice] = compClass;
-                gameState.computerSquares[i - 1] = (gameState.computerSquares[i - 1] || 0) + 1;
-            } else if (bounced.has(i)) {
-                // bounced
-            }
-        }
-    }
-    io.emit('game-state', getSerializableGameState());
-}
+// (Authoritative multiplayer round logic is implemented later in this file.)
 
 // --- Socket.io connection handler ---
 io.on('connection', (socket) => {
@@ -249,7 +166,7 @@ io.on('connection', (socket) => {
     gameState.playerSquares[socket.id] = 0;
     // Assign a unique, stable player number
     if (!playerNumbers[socket.id]) {
-        playerNumbers[socket.id] = Object.keys(playerNumbers).length;
+        playerNumbers[socket.id] = Object.keys(playerNumbers).length + 1;
     }
     // Assign player colors based on turn order: host=red, next=blue, then green, yellow, etc.
     if (!gameState.playerColors) gameState.playerColors = {};
@@ -353,6 +270,15 @@ io.on('connection', (socket) => {
         if (gameState.currentTurn !== socket.id) return;
         if (gameState.claimed[index] !== null) return;
         gameState.claimed[index] = socket.id;
+        // Increment this player's square count for the starting pick
+        gameState.playerSquares[socket.id] = (gameState.playerSquares[socket.id] || 0) + 1;
+        // Update move log for feedback on starting placement
+        gameState.moveLog.push({
+            idx: index,
+            color: gameState.playerColors[socket.id] || '#e74c3c',
+            moveType: 'claim'
+        });
+        io.emit('game-state', getSerializableGameState());
         advanceStartingTurn();
     });
 
@@ -404,6 +330,11 @@ function startGameFromLobby() {
     gameState.playerColors = {};
     gameState.turnOrder.forEach((pid, i) => {
         gameState.playerColors[pid] = colorList[i % colorList.length];
+    });
+    // Also assign CSS classes player1..playerN following turn order for distinct grid colors
+    playerClasses = {};
+    gameState.turnOrder.forEach((pid, i) => {
+        playerClasses[pid] = `player${i + 1}`;
     });
     console.log('[DEBUG] Game started. Turn order:', gameState.turnOrder);
     console.log('[DEBUG] First turn:', gameState.currentTurn, gameState.currentTurnName);
@@ -467,18 +398,7 @@ function emitPlayers() {
     });
 }
 
-function resetGameState() {
-    gameState.grid = Array(GRID_SIZE * GRID_SIZE).fill(null);
-    gameState.claimed = Array(GRID_SIZE * GRID_SIZE).fill(null);
-    gameState.playerSquares = {};
-    gameState.defended = Array(GRID_SIZE * GRID_SIZE).fill(false);
-    gameState.roundActive = false;
-    gameState.timer = lobby.timer || 3;
-    gameState.playerChoices = {};
-    gameState.moveLog = [];
-    gameState.winner = '';
-}
-
+// --- Authoritative Round Loop ---
 function startRound() {
     if (!lobby.started) {
         console.log('[DEBUG] Attempted to start round, but lobby.started is false');
@@ -511,8 +431,24 @@ function endRound() {
     if (gameState.interval) clearInterval(gameState.interval);
     gameState.roundActive = false;
     console.log('[SERVER] --- END ROUND ---');
+    // Bounce detection: count how many players targeted each index
+    const counts = {};
+    for (const idx of Object.values(gameState.playerChoices)) {
+        if (idx !== null && idx !== undefined) counts[idx] = (counts[idx] || 0) + 1;
+    }
     // Apply moves: all player choices
     for (const [pid, idx] of Object.entries(gameState.playerChoices)) {
+        // If multiple players targeted the same square, it's a bounce (no change)
+        if (counts[idx] > 1) {
+            console.log(`[SERVER] Square ${idx} BOUNCED among ${counts[idx]} players`);
+            // Optional: log as no-op for UI visibility
+            gameState.moveLog.push({
+                idx: idx,
+                color: gameState.playerColors[pid] || '#888',
+                moveType: 'no placement'
+            });
+            continue;
+        }
         // Takeover: if owned by another player
         if (gameState.claimed[idx] && gameState.claimed[idx] !== pid) {
             const prevOwner = gameState.claimed[idx];
@@ -548,8 +484,6 @@ function endRound() {
     for (const pid of Object.keys(gameState.playerSquares)) {
         if (gameState.playerSquares[pid] <= 0) {
             delete gameState.playerSquares[pid];
-            // Optionally: also remove from turnOrder, playerColors, etc.
-            // Optionally: log elimination
             console.log(`[SERVER] Player ${pid} eliminated (no squares left)`);
         }
     }
@@ -570,7 +504,25 @@ function endRound() {
     setTimeout(() => startRound(), 1500);
 }
 
-const PORT = process.env.PORT || 3000;
+// Duplicate minimalist resetGameState/startRound/endRound definitions were removed below to prevent overriding the
+// comprehensive multiplayer state defined earlier.
+
+let PORT = Number(process.env.PORT) || 3000;
+const BASE_PORT = PORT;
+
+server.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+        const next = PORT + 1;
+        if (next < BASE_PORT + 10) {
+            console.warn(`[WARN] Port ${PORT} in use. Retrying on ${next}...`);
+            PORT = next;
+            setTimeout(() => server.listen(PORT), 500);
+            return;
+        }
+    }
+    throw err;
+});
+
 server.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
 });

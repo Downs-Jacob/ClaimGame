@@ -54,6 +54,8 @@ let gameState = {
     turnIndex: 0,
     phase: 'lobby', // 'lobby', 'choose_start', 'main'
     startingTurnIndex: 0, // for starting square selection
+    playerColors: {}, // will be set after turnOrder is set
+    homeBases: {} // { socketId: index }
 };
 
 function resetGameState() {
@@ -84,7 +86,8 @@ function resetGameState() {
         turnIndex: 0,
         phase: 'lobby', // 'lobby', 'choose_start', 'main'
         startingTurnIndex: 0, // for starting square selection
-        playerColors: {} // will be set after turnOrder is set
+        playerColors: {}, // will be set after turnOrder is set
+        homeBases: {} // { socketId: index }
     };
 }
 
@@ -272,6 +275,9 @@ io.on('connection', (socket) => {
         gameState.claimed[index] = socket.id;
         // Increment this player's square count for the starting pick
         gameState.playerSquares[socket.id] = (gameState.playerSquares[socket.id] || 0) + 1;
+        // Record home base for this player
+        if (!gameState.homeBases) gameState.homeBases = {};
+        gameState.homeBases[socket.id] = index;
         // Update move log for feedback on starting placement
         gameState.moveLog.push({
             idx: index,
@@ -298,6 +304,10 @@ io.on('connection', (socket) => {
         delete gameState.playerSquares[socket.id];
         connectedPlayers = connectedPlayers.filter(id => id !== socket.id);
         delete playerNumbers[socket.id];
+        // Clean up home base mapping
+        if (gameState.homeBases && socket.id in gameState.homeBases) {
+            delete gameState.homeBases[socket.id];
+        }
         emitPlayers();
         io.emit('game-state', getSerializableGameState());
         // If host leaves, pick a new host
@@ -398,6 +408,57 @@ function emitPlayers() {
     });
 }
 
+// Eliminate a player: remove them from player lists and free their squares
+function eliminatePlayer(playerId) {
+    console.log(`[SERVER] Eliminating player ${playerId} (home base lost)`);
+    // Free all squares owned by this player
+    for (let i = 0; i < gameState.claimed.length; i++) {
+        if (gameState.claimed[i] === playerId) {
+            gameState.claimed[i] = null;
+            if (Array.isArray(gameState.defended)) gameState.defended[i] = false;
+        }
+    }
+    // Remove from playerSquares
+    delete gameState.playerSquares[playerId];
+    // Remove from playerChoices if present
+    if (gameState.playerChoices && playerId in gameState.playerChoices) {
+        delete gameState.playerChoices[playerId];
+    }
+    // Remove from playerColors
+    if (gameState.playerColors && playerId in gameState.playerColors) {
+        delete gameState.playerColors[playerId];
+    }
+    // Remove from homeBases
+    if (gameState.homeBases && playerId in gameState.homeBases) {
+        delete gameState.homeBases[playerId];
+    }
+    // Remove from turnOrder
+    if (Array.isArray(gameState.turnOrder)) {
+        const idx = gameState.turnOrder.indexOf(playerId);
+        if (idx !== -1) {
+            gameState.turnOrder.splice(idx, 1);
+            // Adjust turnIndex if needed
+            if (gameState.turnIndex >= gameState.turnOrder.length) {
+                gameState.turnIndex = 0;
+            }
+            // Update current turn name if we are in a phase that uses it
+            if (gameState.turnOrder.length > 0) {
+                gameState.currentTurn = gameState.turnOrder[gameState.turnIndex] || null;
+                gameState.currentTurnName = gameState.currentTurn ? getTurnName(gameState.currentTurn) : '';
+            } else {
+                gameState.currentTurn = null;
+                gameState.currentTurnName = '';
+            }
+        }
+    }
+    // Log elimination
+    gameState.moveLog.push({
+        idx: null,
+        color: gameState.playerColors[playerId] || '#888',
+        moveType: 'eliminated'
+    });
+}
+
 // --- Authoritative Round Loop ---
 function startRound() {
     if (!lobby.started) {
@@ -436,16 +497,35 @@ function endRound() {
     for (const idx of Object.values(gameState.playerChoices)) {
         if (idx !== null && idx !== undefined) counts[idx] = (counts[idx] || 0) + 1;
     }
+    // Build bounced index set
+    const bouncedIdx = new Set(Object.keys(counts).filter(k => counts[k] > 1).map(k => parseInt(k)));
+    // First pass: determine which players will be eliminated this round due to home-base capture
+    const eliminatedThisRound = new Set();
+    for (const [attackerId, idx] of Object.entries(gameState.playerChoices)) {
+        if (idx === null || idx === undefined) continue;
+        if (bouncedIdx.has(idx)) continue; // bounced, no capture happens
+        const prevOwner = gameState.claimed[idx];
+        if (prevOwner && prevOwner !== attackerId) {
+            if (gameState.homeBases && gameState.homeBases[prevOwner] === idx) {
+                eliminatedThisRound.add(prevOwner);
+            }
+        }
+    }
     // Apply moves: all player choices
     for (const [pid, idx] of Object.entries(gameState.playerChoices)) {
+        // Skip moves by players eliminated this round (e.g., their home base was captured)
+        if (eliminatedThisRound.has(pid)) {
+            console.log(`[SERVER] Skipping move by ${pid} (eliminated this round)`);
+            continue;
+        }
+        if (idx === null || idx === undefined) continue;
         // If multiple players targeted the same square, it's a bounce (no change)
-        if (counts[idx] > 1) {
+        if (bouncedIdx.has(idx)) {
             console.log(`[SERVER] Square ${idx} BOUNCED among ${counts[idx]} players`);
-            // Optional: log as no-op for UI visibility
             gameState.moveLog.push({
                 idx: idx,
                 color: gameState.playerColors[pid] || '#888',
-                moveType: 'no placement'
+                moveType: 'bounce'
             });
             continue;
         }
@@ -457,6 +537,10 @@ function endRound() {
             if (gameState.playerSquares[prevOwner] > 0) gameState.playerSquares[prevOwner]--;
             gameState.playerSquares[pid] = (gameState.playerSquares[pid] || 0) + 1;
             console.log(`[SERVER] Square ${idx} TAKEN OVER by ${pid} from ${prevOwner}`);
+            // If this was the previous owner's home base, eliminate them immediately
+            if (gameState.homeBases && gameState.homeBases[prevOwner] === idx) {
+                eliminatePlayer(prevOwner);
+            }
         } else if (!gameState.claimed[idx]) {
             // Claim unclaimed
             gameState.claimed[idx] = pid;
@@ -468,6 +552,12 @@ function endRound() {
             console.log(`[SERVER] Square ${idx} DEFENDED by ${pid}`);
         } else {
             console.log(`[SERVER] Square ${idx} - no change (possibly bounced)`);
+        }
+    }
+    // Ensure elimination for any player whose home was targeted this round (mutual base captures => both eliminated)
+    for (const elimId of eliminatedThisRound) {
+        if (gameState.playerSquares[elimId] !== undefined) {
+            eliminatePlayer(elimId);
         }
     }
     // Log 'no placement' for players who did not act
@@ -487,12 +577,22 @@ function endRound() {
             console.log(`[SERVER] Player ${pid} eliminated (no squares left)`);
         }
     }
-    // Check for winner
+    // Check for winner by count threshold, last player standing, or draw
     let winnerId = null;
-    for (const [pid, count] of Object.entries(gameState.playerSquares)) {
-        if (count >= WIN_COUNT) {
-            winnerId = pid;
-            break;
+    const remainingPlayers = Object.keys(gameState.playerSquares);
+    if (remainingPlayers.length === 0) {
+        gameState.winner = 'Draw';
+        io.emit('game-state', getSerializableGameState());
+        return;
+    }
+    if (remainingPlayers.length === 1) {
+        winnerId = remainingPlayers[0];
+    } else {
+        for (const [pid, count] of Object.entries(gameState.playerSquares)) {
+            if (count >= WIN_COUNT) {
+                winnerId = pid;
+                break;
+            }
         }
     }
     if (winnerId) {
@@ -503,9 +603,6 @@ function endRound() {
     io.emit('game-state', getSerializableGameState());
     setTimeout(() => startRound(), 1500);
 }
-
-// Duplicate minimalist resetGameState/startRound/endRound definitions were removed below to prevent overriding the
-// comprehensive multiplayer state defined earlier.
 
 let PORT = Number(process.env.PORT) || 3000;
 const BASE_PORT = PORT;

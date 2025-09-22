@@ -154,6 +154,12 @@ function handleSquareClick(index) {
 
 // --- Render Grid From Server State ---
 function renderGridFromServer(state) {
+    // Determine if we should animate new claims only once when new moves arrive
+    let shouldAnimate = false;
+    const currentMoveLogLen = Array.isArray(state.moveLog) ? state.moveLog.length : 0;
+    if (window._lastMoveLogLen === undefined || currentMoveLogLen !== window._lastMoveLogLen) {
+        shouldAnimate = true;
+    }
     // Phase feedback message
     let phaseMsg = document.getElementById('phase-msg');
     if (!phaseMsg) {
@@ -184,8 +190,8 @@ function renderGridFromServer(state) {
         if (!cell) continue;
         const owner = state.claimed[i];
         cell.className = 'square';
-        // Animate if just claimed
-        if (window.moveLog && window.moveLog.length && window.moveLog[window.moveLog.length-1].idx === i) {
+        // Animate if just claimed, only once per new move log update
+        if (shouldAnimate && window.moveLog && window.moveLog.length && window.moveLog[window.moveLog.length-1].idx === i) {
             cell.classList.add('just-claimed');
             setTimeout(() => cell.classList.remove('just-claimed'), 700);
         }
@@ -203,6 +209,10 @@ function renderGridFromServer(state) {
         }
         // Defended
         if (state.defended && state.defended[i]) cell.classList.add('defended');
+        // Mark home base visually
+        if (state.homeBases && owner && state.homeBases[owner] === i) {
+            cell.classList.add('home-base');
+        }
         // --- Highlight pickable squares for starting phase ---
         if (state.phase === 'choose_start' && state.currentTurn === mySocketId && !owner) {
             cell.classList.add('pickable');
@@ -219,6 +229,8 @@ function renderGridFromServer(state) {
             }
         }
     }
+    // Remember last moveLog length to avoid re-animating on timer ticks
+    window._lastMoveLogLen = currentMoveLogLen;
     // Show winner if present
     if (state.winner && winnerElem) winnerElem.textContent = state.winner;
     else if (winnerElem) winnerElem.textContent = '';
@@ -290,7 +302,10 @@ function renderMoveLog() {
     if (!logElem) return;
     logElem.innerHTML = '';
     if (!window.moveLog || !Array.isArray(window.moveLog)) return;
-    for (const entry of window.moveLog.slice(-30)) {
+    const MAX_ITEMS = 30;
+    // Keep only the latest MAX_ITEMS and show newest first
+    const latest = window.moveLog.slice(-MAX_ITEMS).reverse();
+    for (const entry of latest) {
         let moveText = '';
         if (entry.moveType === 'defend') {
             moveText = `defended (${coordStr(entry.idx)})`;
@@ -298,8 +313,12 @@ function renderMoveLog() {
             moveText = `claimed (${coordStr(entry.idx)})`;
         } else if (entry.moveType === 'takeover') {
             moveText = `took over (${coordStr(entry.idx)})`;
+        } else if (entry.moveType === 'bounce') {
+            moveText = `bounce at (${coordStr(entry.idx)})`;
         } else if (entry.moveType === 'no placement') {
             moveText = `(no placement)`;
+        } else if (entry.moveType === 'eliminated') {
+            moveText = `(eliminated)`;
         }
         const div = document.createElement('div');
         div.textContent = moveText;

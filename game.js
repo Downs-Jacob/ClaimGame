@@ -314,7 +314,7 @@ function renderMoveLog() {
         } else if (entry.moveType === 'takeover') {
             moveText = `took over (${coordStr(entry.idx)})`;
         } else if (entry.moveType === 'bounce') {
-            moveText = `bounce at (${coordStr(entry.idx)})`;
+            moveText = `BOUNCE ${coordStr(entry.idx)}`;
         } else if (entry.moveType === 'no placement') {
             moveText = `(no placement)`;
         } else if (entry.moveType === 'eliminated') {
